@@ -150,7 +150,8 @@ Atypia score is ordinal: 1 < 2 < 3 (being wrong by 2 is penalized harder)
 Use CORN loss or a simple cumulative logit head instead of regular cross-entropy  
 If you want simpler: weighted cross-entropy with penalty weight [1, 1, 2] for off-by-2  
 3. Training strategy  
-|Setting|	Value|
+
+|Setting |	Value|
 |---------|------------|
 |Input size	|512×512|
 |Batch size	|12–16|
