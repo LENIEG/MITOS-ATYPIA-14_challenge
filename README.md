@@ -196,3 +196,14 @@ main()
       │   └─ early stopping on challenge_score
       └─ save checkpoint
 ```
+
+## Appenfix
+
+Partial Cell Structure/Function
+
+Nucleus: the command center of the cell.  
+Nuclear Pores: pores on the nuclear envelope that contains protein and allows transportation in and out of the nuclear membrane.  
+Chromatin: Contains proteins and DNA.  
+Nucleolus: produces ribosomes and contains RNA (genetic information).  
+Nuclear Envelope: double membrane that contains the nucleus.  
+
