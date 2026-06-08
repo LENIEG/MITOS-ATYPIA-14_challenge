@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from tqdm import tqdm
@@ -36,11 +36,14 @@ from Atypia.config import Config, get_default_config
 from Atypia.models import create_model
 from Atypia.losses import get_loss_fn
 from Atypia.metrics import AtypiaMetrics, ordinal_logits_to_predictions
+from Atypia.fold_merge import build_and_save_merged_model
+from Atypia.class_balance import compute_class_weights, get_sample_weights, get_class_counts
 
 
 # ---------------------------------------------------------------------------
 # Training Utilities
 # ---------------------------------------------------------------------------
+
 
 def load_stain_normalizers(cfg: Config) -> dict[str, MacenkoNormalizer | None]:
     """
@@ -67,6 +70,7 @@ def create_dataloaders(
     Create train and validation DataLoaders.
     
     Applies augmentation and stain normalization per dataset split.
+    Uses WeightedRandomSampler on the training set to handle class imbalance.
     """
     train_ds = AtypiaDataset(
         slide_ids=train_ids,
@@ -86,10 +90,26 @@ def create_dataloaders(
         normalizers=normalizers if cfg.stain.enabled else None,
     )
     
+    # Compute class weights to handle imbalance
+    class_weights = compute_class_weights(train_ds)
+    sample_weights = get_sample_weights(train_ds, class_weights)
+    
+    # Log class distribution
+    class_counts = get_class_counts(train_ds)
+    print(f"  Train class distribution: Low={class_counts[0]}, Mod={class_counts[1]}, High={class_counts[2]}")
+    print(f"  Class weights: {class_weights}")
+    
+    # Train loader uses WeightedRandomSampler for balanced batches
+    train_sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(train_ds),
+        replacement=True,
+    )
+    
     train_loader = DataLoader(
         train_ds,
         batch_size=cfg.data.batch_size,
-        shuffle=True,
+        sampler=train_sampler,  # use sampler instead of shuffle
         num_workers=cfg.data.num_workers,
         pin_memory=True,
     )
@@ -210,10 +230,13 @@ def train_fold(
     # Create model
     model = create_model(cfg.model, device=device)
     
+    # Compute class weights from training set
+    class_weights = compute_class_weights(train_loader.dataset)
+    
     # Loss and optimizer
     criterion = get_loss_fn(
         loss_type=cfg.training.loss_type,
-        class_weights=cfg.training.class_weights,
+        class_weights=class_weights.tolist(),
         label_smoothing=cfg.training.label_smoothing,
     )
     criterion = criterion.to(device)
@@ -328,6 +351,18 @@ def main(cfg: Config | None = None):
             f.write(f"Fold {fold_idx}\n")
             f.write(f"  Checkpoint: {result['checkpoint_path']}\n")
             f.write(f"  Metrics: {result['best_val_metrics']}\n\n")
+
+    # Final step: merge all fold checkpoints into one deployable model
+    normalizers = load_stain_normalizers(cfg)
+    build_and_save_merged_model(
+        cfg=cfg,
+        all_fold_results=all_fold_results,
+        folds=folds,
+        normalizers=normalizers,
+        summary_path=summary_path,
+        alpha=8.0,
+    )
+
     print(f"Summary saved to: {summary_path}")
 
 

@@ -19,13 +19,23 @@ class CORNLoss(nn.Module):
     For ordinal regression with K classes, uses K-1 output units (thresholds).
     Encourages monotonic cumulative probabilities: P(y≥1) ≤ P(y≥2) ≤ P(y≥3).
     
+    Supports optional class weights to handle imbalanced data.
+    
     Reference: Cao et al. "Rank Consistent Ordinal Regression for Neural Networks"
     """
     
-    def __init__(self, num_classes: int = 3):
+    def __init__(self, num_classes: int = 3, class_weights: list[float] | None = None):
         super().__init__()
         self.num_classes = num_classes
         self.num_logits = num_classes - 1
+        
+        if class_weights is None:
+            class_weights = [1.0] * num_classes
+        
+        self.register_buffer(
+            "class_weights",
+            torch.tensor(class_weights, dtype=torch.float32)
+        )
     
     def forward(
         self,
@@ -45,8 +55,13 @@ class CORNLoss(nn.Module):
         set_labels = self._ordinal_targets_to_binary(targets)  # (batch, K-1)
         
         # Binary cross-entropy on each threshold
-        loss = F.binary_cross_entropy_with_logits(logits, set_labels.float())
-        return loss
+        bce_loss = F.binary_cross_entropy_with_logits(logits, set_labels.float(), reduction="none")
+        
+        # Apply per-sample class weights
+        sample_weights = self.class_weights[targets].unsqueeze(1)  # (batch, 1)
+        weighted_loss = (bce_loss * sample_weights).mean()
+        
+        return weighted_loss
     
     def _ordinal_targets_to_binary(self, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -134,7 +149,10 @@ def get_loss_fn(
         Loss module
     """
     if loss_type == "ordinal":
-        return CORNLoss(num_classes=num_classes)
+        return CORNLoss(
+            num_classes=num_classes,
+            class_weights=class_weights,
+        )
     elif loss_type == "weighted_ce":
         return WeightedCELoss(
             num_classes=num_classes,
